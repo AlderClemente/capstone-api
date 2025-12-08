@@ -2,6 +2,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const js2xmlparser = require('js2xmlparser');
 const cors = require('cors');
+const xml2js = require('xml2js');
 
 const app = express();
 app.use(cors());
@@ -22,6 +23,16 @@ function sendResponse(req, res, data) {
     }
 }
 
+// Helper function to parse XML body
+async function parseXmlBody(body) {
+    return new Promise((resolve, reject) => {
+        xml2js.parseString(body, { explicitArray: false }, (err, result) => {
+            if (err) reject(err);
+            else resolve(result.resource);
+        });
+    });
+}
+
 // ======================
 // RESTful API Endpoints
 // ======================
@@ -32,34 +43,28 @@ app.get('/resource', (req, res) => {
 });
 
 // 2. POST /resource → add a new resource
-app.post('/resource', (req, res) => {
+app.post('/resource', async (req, res) => {
     let data = req.body;
 
-    // If request is XML, parse it
-    if (req.is('application/xml')) {
-        const xml2js = require('xml2js');
-        xml2js.parseString(req.body, (err, result) => {
-            if (err) return res.status(400).send("Invalid XML");
-            data = result.resource;
-            createResource(data, res);
-        });
-    } else {
-        createResource(data, res);
+    try {
+        if (req.is('application/xml')) {
+            data = await parseXmlBody(req.body);
+        }
+
+        const resource = {
+            id: nextId++,
+            name: data.name,
+            description: data.description,
+            quantity: Number(data.quantity),
+            price: Number(data.price)
+        };
+
+        resources.push(resource);
+        sendResponse(req, res, resource);
+    } catch (err) {
+        res.status(400).send("Invalid XML");
     }
 });
-
-// Function to create resource
-function createResource(data, res) {
-    const resource = {
-        id: nextId++,
-        name: data.name,
-        description: data.description,
-        quantity: Number(data.quantity),
-        price: Number(data.price)
-    };
-    resources.push(resource);
-    sendResponse({ headers: { accept: 'application/json' } }, res, resource);
-}
 
 // 3. GET /resource/:id → get a specific resource by ID
 app.get('/resource/:id', (req, res) => {
@@ -69,25 +74,38 @@ app.get('/resource/:id', (req, res) => {
 });
 
 // 4. PUT /resource/:id → update a specific resource
-app.put('/resource/:id', (req, res) => {
+app.put('/resource/:id', async (req, res) => {
     const resource = resources.find(r => r.id == req.params.id);
     if (!resource) return res.status(404).send("Resource not found");
 
-    const data = req.body;
-    resource.name = data.name || resource.name;
-    resource.description = data.description || resource.description;
-    resource.quantity = data.quantity !== undefined ? Number(data.quantity) : resource.quantity;
-    resource.price = data.price !== undefined ? Number(data.price) : resource.price;
+    let data = req.body;
+    try {
+        if (req.is('application/xml')) {
+            data = await parseXmlBody(req.body);
+        }
 
-    sendResponse(req, res, resource);
+        resource.name = data.name || resource.name;
+        resource.description = data.description || resource.description;
+        resource.quantity = data.quantity !== undefined ? Number(data.quantity) : resource.quantity;
+        resource.price = data.price !== undefined ? Number(data.price) : resource.price;
+
+        sendResponse(req, res, resource);
+    } catch (err) {
+        res.status(400).send("Invalid XML");
+    }
 });
 
 // 5. DELETE /resource/:id → delete a specific resource
 app.delete('/resource/:id', (req, res) => {
-    resources = resources.filter(r => r.id != req.params.id);
+    const resourceIndex = resources.findIndex(r => r.id == req.params.id);
+    if (resourceIndex === -1) return res.status(404).send("Resource not found");
+
+    resources.splice(resourceIndex, 1);
     sendResponse(req, res, { message: `Resource ${req.params.id} deleted successfully.` });
 });
 
 // Start server
-const PORT = process.env.PORT || 3000; // <- use this instead of 3000 only
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+module.exports = app; // for Vercel deployment
